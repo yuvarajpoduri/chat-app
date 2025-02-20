@@ -1,9 +1,9 @@
-import React, { useRef, useState } from 'react';
+import React, { useRef, useState, useEffect } from 'react';
 import './App.css';
-
 import { initializeApp } from "firebase/app";
 import { getAuth, GoogleAuthProvider, signInWithPopup, signOut } from "firebase/auth";
 import { getFirestore, collection, addDoc, serverTimestamp, orderBy, query, limit } from "firebase/firestore";
+import { getMessaging, getToken, onMessage } from "firebase/messaging";
 import { useAuthState } from 'react-firebase-hooks/auth';
 import { useCollectionData } from 'react-firebase-hooks/firestore';
 
@@ -11,18 +11,25 @@ const firebaseConfig = {
   apiKey: "AIzaSyDrGV3ZSNq6YHFACRTi6umrOiHJGw5uaY4",
   authDomain: "room-829.firebaseapp.com",
   projectId: "room-829",
-  storageBucket: "room-829.firebasestorage.app",
+  storageBucket: "room-829.appspot.com",
   messagingSenderId: "890052258350",
   appId: "1:890052258350:web:b25850535c2c1a71e64dbf",
   measurementId: "G-RFYEGWP1B7"
 };
 
+// Initialize Firebase
 const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
 const firestore = getFirestore(app);
+const messaging = getMessaging(app);
 
 function App() {
   const [user] = useAuthState(auth);
+
+  useEffect(() => {
+    requestNotificationPermission();
+  }, []);
+
   return (
     <div className="App">
       <header>
@@ -33,6 +40,21 @@ function App() {
     </div>
   );
 }
+
+// Request Notification Permission
+const requestNotificationPermission = async () => {
+  try {
+    const permission = await Notification.requestPermission();
+    if (permission === "granted") {
+      const token = await getToken(messaging, { vapidKey: "BDVWyl9FbzZowmHenhBfVZ0EN0yLxe1pBGQ8LHn49LuQDRklZ5KIWSJGF6-YqB5MuZes8GL5Jdkfl5ixwgdE8LY" });
+      console.log("FCM Token:", token);
+    } else {
+      console.log("Notification permission denied");
+    }
+  } catch (error) {
+    console.error("Error getting notification permission:", error);
+  }
+};
 
 function SignIn() {
   const signInWithGoogle = async () => {
@@ -64,15 +86,20 @@ function ChatRoom() {
   const sendMessage = async (e) => {
     e.preventDefault();
     const { uid, photoURL, displayName } = auth.currentUser;
-    await addDoc(messagesRef, {
+
+    const messageData = {
       text: formValue,
       createdAt: serverTimestamp(),
       uid,
       photoURL,
       displayName
-    });
+    };
+
+    await addDoc(messagesRef, messageData);
     setFormValue('');
     dummy.current.scrollIntoView({ behavior: 'smooth' });
+
+    sendNotification(messageData);
   };
 
   return (
@@ -88,6 +115,16 @@ function ChatRoom() {
     </>
   );
 }
+
+// Function to Send Notification
+const sendNotification = async (messageData) => {
+  if (Notification.permission === "granted") {
+    new Notification(`${messageData.displayName} sent a message`, {
+      body: messageData.text,
+      icon: messageData.photoURL || "https://api.adorable.io/avatars/23/avatar.png",
+    });
+  }
+};
 
 function ChatMessage(props) {
   const { text, uid, photoURL, displayName, createdAt } = props.message;
