@@ -46,6 +46,34 @@ try {
   console.log("Firebase messaging not supported:", error);
 }
 
+// Track user interactions for vibration API
+let userHasInteracted = false;
+let notificationPermissionRequested = false;
+
+// Track user interactions
+const trackUserInteraction = () => {
+  if (!userHasInteracted) {
+    userHasInteracted = true;
+    console.log("✅ User interaction detected - vibration now available");
+  }
+};
+
+// Safe vibration function with user interaction check
+const safeVibrate = (pattern) => {
+  if ("vibrate" in navigator && userHasInteracted) {
+    try {
+      navigator.vibrate(pattern);
+      console.log("📱 Vibration triggered");
+    } catch (error) {
+      console.log("❌ Vibration failed:", error);
+    }
+  } else if ("vibrate" in navigator && !userHasInteracted) {
+    console.log("⚠️ Vibration blocked - user hasn't interacted yet");
+  } else {
+    console.log("❌ Vibration not supported");
+  }
+};
+
 // Move helper functions outside of components to avoid redeclaration
 const formatDateSeparator = (date) => {
   const now = new Date();
@@ -95,11 +123,181 @@ const shouldShowDateSeparator = (currentMessage, previousMessage) => {
   return currentDate.toDateString() !== previousDate.toDateString();
 };
 
+// Custom notification permission modal
+const showNotificationPermissionModal = () => {
+  return new Promise((resolve) => {
+    // Create modal overlay
+    const overlay = document.createElement("div");
+    overlay.className = "notification-permission-overlay";
+
+    // Create modal
+    const modal = document.createElement("div");
+    modal.className = "notification-permission-modal";
+
+    modal.innerHTML = `
+      <div class="modal-content">
+        <div class="modal-header">
+          <h3>🔔 Enable Notifications</h3>
+        </div>
+        <div class="modal-body">
+          <p>Get notified when you receive new messages, even when the app is in the background.</p>
+          <p>This helps you stay connected with your conversations!</p>
+        </div>
+        <div class="modal-buttons">
+          <button class="modal-button secondary" data-action="deny">Not Now</button>
+          <button class="modal-button primary" data-action="allow">Enable Notifications</button>
+        </div>
+      </div>
+    `;
+
+    // Add styles if not already added
+    if (!document.querySelector("#notification-modal-styles")) {
+      const styles = document.createElement("style");
+      styles.id = "notification-modal-styles";
+      styles.textContent = `
+        .notification-permission-overlay {
+          position: fixed;
+          top: 0;
+          left: 0;
+          right: 0;
+          bottom: 0;
+          background: rgba(0, 0, 0, 0.5);
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          z-index: 10000;
+          padding: 20px;
+        }
+        
+        .notification-permission-modal {
+          background: white;
+          border-radius: 12px;
+          box-shadow: 0 10px 30px rgba(0, 0, 0, 0.3);
+          max-width: 400px;
+          width: 100%;
+          animation: modalSlideIn 0.3s ease-out;
+        }
+        
+        .modal-content {
+          padding: 24px;
+        }
+        
+        .modal-header h3 {
+          margin: 0 0 16px 0;
+          color: #333;
+          font-size: 18px;
+          text-align: center;
+        }
+        
+        .modal-body p {
+          margin: 0 0 12px 0;
+          color: #666;
+          line-height: 1.4;
+          text-align: center;
+        }
+        
+        .modal-buttons {
+          display: flex;
+          gap: 12px;
+          margin-top: 24px;
+        }
+        
+        .modal-button {
+          flex: 1;
+          padding: 12px 20px;
+          border: none;
+          border-radius: 8px;
+          font-size: 14px;
+          font-weight: 500;
+          cursor: pointer;
+          transition: all 0.2s;
+        }
+        
+        .modal-button.primary {
+          background: #007bff;
+          color: white;
+        }
+        
+        .modal-button.primary:hover {
+          background: #0056b3;
+        }
+        
+        .modal-button.secondary {
+          background: #f8f9fa;
+          color: #666;
+          border: 1px solid #dee2e6;
+        }
+        
+        .modal-button.secondary:hover {
+          background: #e9ecef;
+        }
+        
+        @keyframes modalSlideIn {
+          from {
+            transform: translateY(-20px);
+            opacity: 0;
+          }
+          to {
+            transform: translateY(0);
+            opacity: 1;
+          }
+        }
+        
+        @media (max-width: 480px) {
+          .notification-permission-overlay {
+            padding: 16px;
+          }
+          
+          .modal-content {
+            padding: 20px;
+          }
+          
+          .modal-buttons {
+            flex-direction: column;
+          }
+        }
+      `;
+      document.head.appendChild(styles);
+    }
+
+    // Add event listeners
+    const handleClick = (e) => {
+      const action = e.target.dataset.action;
+      if (action) {
+        document.body.removeChild(overlay);
+        resolve(action === "allow");
+      }
+    };
+
+    modal.addEventListener("click", handleClick);
+
+    // Add to DOM
+    overlay.appendChild(modal);
+    document.body.appendChild(overlay);
+
+    // Handle outside click
+    overlay.addEventListener("click", (e) => {
+      if (e.target === overlay) {
+        document.body.removeChild(overlay);
+        resolve(false);
+      }
+    });
+  });
+};
+
 // Notification functions moved outside component
 const requestNotificationPermission = async () => {
   try {
+    // Only ask once per session
+    if (notificationPermissionRequested) {
+      console.log("Notification permission already requested this session");
+      return;
+    }
+
+    notificationPermissionRequested = true;
+
     if (!("Notification" in window)) {
-      console.log("This browser does not support notifications");
+      console.log("❌ This browser does not support notifications");
       return;
     }
 
@@ -109,30 +307,53 @@ const requestNotificationPermission = async () => {
       return;
     }
 
-    const permission = await Notification.requestPermission();
-    console.log("Notification permission:", permission);
+    // Check current permission status
+    console.log("Current notification permission:", Notification.permission);
+
+    if (Notification.permission === "granted") {
+      console.log("✅ Notifications already granted");
+      showTestNotification();
+      return;
+    }
+
+    if (Notification.permission === "denied") {
+      console.log("❌ Notifications permanently denied");
+      return;
+    }
+
+    // Show custom modal instead of browser confirm
+    const userWantsNotifications = await showNotificationPermissionModal();
+
+    if (!userWantsNotifications) {
+      console.log("User declined notifications");
+      return;
+    }
+
+    // Request permission
+    console.log("📱 Requesting notification permission...");
+
+    let permission;
+    try {
+      permission = await Notification.requestPermission();
+    } catch (error) {
+      // Fallback for older browsers
+      permission = await new Promise((resolve) => {
+        Notification.requestPermission(resolve);
+      });
+    }
+
+    console.log("📱 Notification permission result:", permission);
 
     if (permission === "granted") {
-      console.log("✅ Basic notification permission granted");
+      console.log("✅ Notification permission granted!");
       showTestNotification();
-    } else {
+    } else if (permission === "denied") {
       console.log("❌ Notification permission denied");
+    } else {
+      console.log("⏸️ Notification permission dismissed");
     }
   } catch (error) {
     console.error("❌ Error requesting notification permission:", error);
-    // Fallback for mobile - try without async/await
-    try {
-      if (Notification.permission === "default") {
-        Notification.requestPermission().then((permission) => {
-          if (permission === "granted") {
-            console.log("✅ Fallback notification permission granted");
-            showTestNotification();
-          }
-        });
-      }
-    } catch (fallbackError) {
-      console.error("❌ Fallback notification setup failed:", fallbackError);
-    }
   }
 };
 
@@ -140,23 +361,41 @@ const showTestNotification = () => {
   if (Notification.permission === "granted") {
     try {
       const testNotification = new Notification("🎉 Notifications Ready!", {
-        body: "You'll now receive chat notifications",
-        icon: "/favicon.ico",
+        body: "You'll receive alerts when you get new messages",
+        icon: window.location.origin + "/favicon.ico",
         tag: "test-notification",
         requireInteraction: false,
         silent: false,
+        data: {
+          type: "test",
+        },
       });
 
+      // Add click handler for test notification
+      testNotification.onclick = function () {
+        console.log("Test notification clicked");
+        if (window.focus) {
+          window.focus();
+        }
+        this.close();
+      };
+
+      // Auto-close after 4 seconds
       setTimeout(() => {
         if (testNotification) {
           testNotification.close();
         }
-      }, 3000);
+      }, 4000);
 
-      console.log("✅ Test notification sent");
+      console.log("✅ Test notification displayed");
+
+      // Use safe vibration function
+      safeVibrate([100, 50, 100]);
     } catch (error) {
       console.error("❌ Test notification failed:", error);
     }
+  } else {
+    console.log("❌ Cannot show test notification - permission not granted");
   }
 };
 
@@ -189,7 +428,7 @@ const setupForegroundNotifications = () => {
 };
 
 const sendNotification = async (messageData) => {
-  console.log("📨 Attempting to send mobile notification for:", messageData);
+  console.log("📨 Attempting to send notification for:", messageData);
 
   // Only send notification if it's not from the current user
   if (messageData.uid === auth.currentUser?.uid) {
@@ -197,70 +436,100 @@ const sendNotification = async (messageData) => {
     return;
   }
 
+  // Check if app is in background (only send notifications when app is not visible)
+  if (!document.hidden) {
+    console.log("📱 App is active, skipping notification");
+    return;
+  }
+
+  console.log("📱 App is in background, sending notification");
+
   // Check if notifications are supported and permitted
   if (!("Notification" in window)) {
-    console.log("❌ Notifications not supported");
+    console.log("❌ Notifications not supported, showing in-app fallback");
     showInAppNotification(messageData);
     return;
   }
 
   if (Notification.permission !== "granted") {
-    console.log("❌ Notification permission not granted");
+    console.log(
+      "❌ Notification permission not granted, showing in-app fallback"
+    );
     showInAppNotification(messageData);
     return;
   }
 
   try {
-    const notification = new Notification(`💬 ${messageData.displayName}`, {
+    // Enhanced notification options for better mobile support
+    const notificationOptions = {
       body:
         messageData.text.length > 100
           ? messageData.text.substring(0, 100) + "..."
           : messageData.text,
-      icon: "/favicon.ico",
-      badge: "/favicon.ico",
-      tag: "chat-message",
-      requireInteraction: false,
+      icon: window.location.origin + "/favicon.ico",
+      badge: window.location.origin + "/favicon.ico",
+      tag: "chat-message-" + messageData.id,
+      requireInteraction: true,
       silent: false,
-      vibrate: [200, 100, 200],
       data: {
         messageId: messageData.id,
         timestamp: Date.now(),
         sender: messageData.displayName,
+        url: window.location.href,
       },
-    });
+    };
 
-    setTimeout(() => {
-      if (notification) {
-        notification.close();
-      }
-    }, 6000);
+    // Use safe vibration function
+    safeVibrate([200, 100, 200]);
 
+    const notification = new Notification(
+      `💬 ${messageData.displayName}`,
+      notificationOptions
+    );
+
+    // Handle notification click
     notification.onclick = function (event) {
       console.log("📱 Notification clicked");
+      event.preventDefault();
+
+      // Focus the window
       if (window.focus) {
         window.focus();
       }
+
+      // Bring app to foreground
+      if (window.parent && window.parent.focus) {
+        window.parent.focus();
+      }
+
+      // Scroll to bottom of chat
       setTimeout(() => {
         const dummy = document.querySelector(".scroll-anchor");
         if (dummy) {
           dummy.scrollIntoView({ behavior: "smooth" });
         }
-      }, 100);
+      }, 200);
+
       this.close();
     };
 
+    // Handle notification error
     notification.onerror = function (event) {
       console.error("❌ Notification error:", event);
       showInAppNotification(messageData);
     };
 
-    console.log("✅ Mobile notification sent successfully");
+    // Auto-close after 10 seconds (longer for mobile)
+    setTimeout(() => {
+      if (notification) {
+        notification.close();
+      }
+    }, 10000);
 
-    if ("vibrate" in navigator) {
-      navigator.vibrate([200, 100, 200]);
-    }
+    console.log("✅ Push notification sent successfully");
   } catch (error) {
-    console.error("❌ Error showing mobile notification:", error);
+    console.error("❌ Error showing push notification:", error);
+    // Always show in-app notification as fallback
     showInAppNotification(messageData);
   }
 };
@@ -375,9 +644,8 @@ const showInAppNotification = (messageData) => {
     }
   }, 5000);
 
-  if ("vibrate" in navigator) {
-    navigator.vibrate([200, 100, 200]);
-  }
+  // Use safe vibration function
+  safeVibrate([200, 100, 200]);
 };
 
 const clearExistingNotifications = () => {
@@ -405,8 +673,27 @@ function App() {
   const [user] = useAuthState(auth);
 
   useEffect(() => {
+    // Track user interactions for vibration API
+    const events = ["click", "touchstart", "keydown", "mousedown"];
+
+    const handleInteraction = () => {
+      trackUserInteraction();
+      // Remove listeners after first interaction
+      events.forEach((event) => {
+        document.removeEventListener(event, handleInteraction);
+      });
+    };
+
+    events.forEach((event) => {
+      document.addEventListener(event, handleInteraction, { once: true });
+    });
+
     if (user) {
-      requestNotificationPermission();
+      // Request notification permission only once when user logs in
+      setTimeout(() => {
+        requestNotificationPermission();
+      }, 1000); // Small delay to ensure user is settled
+
       setupForegroundNotifications();
 
       const handleAppResume = () => {
@@ -424,8 +711,17 @@ function App() {
       return () => {
         window.removeEventListener("focus", handleAppResume);
         window.removeEventListener("blur", handleAppPause);
+        events.forEach((event) => {
+          document.removeEventListener(event, handleInteraction);
+        });
       };
     }
+
+    return () => {
+      events.forEach((event) => {
+        document.removeEventListener(event, handleInteraction);
+      });
+    };
   }, [user]);
 
   return (
@@ -543,11 +839,35 @@ function SignIn() {
 }
 
 function SignOut() {
+  const testNotification = () => {
+    if (Notification.permission === "granted") {
+      const testMsg = {
+        uid: "test-user-id",
+        displayName: "Test User",
+        text: "This is a test notification to check if notifications work!",
+        id: "test-" + Date.now(),
+      };
+      sendNotification(testMsg);
+    } else {
+      alert("🔔 Please allow notifications first!");
+      requestNotificationPermission();
+    }
+  };
+
   return (
     auth.currentUser && (
-      <button className="signout-button" onClick={() => signOut(auth)}>
-        Sign Out
-      </button>
+      <div className="header-buttons">
+        <button
+          className="test-notification-button"
+          onClick={testNotification}
+          title="Test Notifications"
+        >
+          🔔
+        </button>
+        <button className="signout-button" onClick={() => signOut(auth)}>
+          Sign Out
+        </button>
+      </div>
     )
   );
 }
@@ -621,7 +941,7 @@ function ChatRoom() {
 
       setTimeout(() => {
         sendNotification(notificationData);
-      }, 500);
+      }, 1000);
     } catch (error) {
       console.error("❌ Error sending message:", error);
       alert("Failed to send message. Please try again.");
@@ -709,10 +1029,20 @@ function ChatMessage({ message }) {
       )}
 
       <div className={`message-bubble ${isOwn ? "own" : "other"}`}>
-        {!isOwn && <div className="message-sender">{displayName}</div>}
-        <div className="message-text">{text}</div>
-        <div className="message-time">{timestamp}</div>
+        <div className="message-content">
+          <div className="message-header">
+            {!isOwn && <span className="message-author">{displayName}</span>}
+            <span className="message-time">{timestamp}</span>
+          </div>
+          <div className="message-text">{text}</div>
+        </div>
       </div>
+
+      {isOwn && (
+        <div className="message-avatar own">
+          <span className="avatar-text">{firstLetter}</span>
+        </div>
+      )}
     </div>
   );
 }
