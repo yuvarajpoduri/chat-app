@@ -46,33 +46,8 @@ try {
   console.log("Firebase messaging not supported:", error);
 }
 
-// Track user interactions for vibration API
-let userHasInteracted = false;
+// Track if notification permission was already requested
 let notificationPermissionRequested = false;
-
-// Track user interactions
-const trackUserInteraction = () => {
-  if (!userHasInteracted) {
-    userHasInteracted = true;
-    console.log("✅ User interaction detected - vibration now available");
-  }
-};
-
-// Safe vibration function with user interaction check
-const safeVibrate = (pattern) => {
-  if ("vibrate" in navigator && userHasInteracted) {
-    try {
-      navigator.vibrate(pattern);
-      console.log("📱 Vibration triggered");
-    } catch (error) {
-      console.log("❌ Vibration failed:", error);
-    }
-  } else if ("vibrate" in navigator && !userHasInteracted) {
-    console.log("⚠️ Vibration blocked - user hasn't interacted yet");
-  } else {
-    console.log("❌ Vibration not supported");
-  }
-};
 
 // Move helper functions outside of components to avoid redeclaration
 const formatDateSeparator = (date) => {
@@ -123,172 +98,246 @@ const shouldShowDateSeparator = (currentMessage, previousMessage) => {
   return currentDate.toDateString() !== previousDate.toDateString();
 };
 
-// Custom notification permission modal
-const showNotificationPermissionModal = () => {
-  return new Promise((resolve) => {
-    // Create modal overlay
-    const overlay = document.createElement("div");
-    overlay.className = "notification-permission-overlay";
+// Enhanced mobile detection and PWA functions
+const isPWA = () => {
+  return (
+    window.matchMedia("(display-mode: standalone)").matches ||
+    window.navigator.standalone === true ||
+    document.referrer.includes("android-app://")
+  );
+};
 
-    // Create modal
-    const modal = document.createElement("div");
-    modal.className = "notification-permission-modal";
+const detectMobileAndSetup = () => {
+  const isMobile =
+    /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(
+      navigator.userAgent
+    );
+  const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent);
+  const isAndroid = /Android/i.test(navigator.userAgent);
 
-    modal.innerHTML = `
+  console.log("Device info:", { isMobile, isIOS, isAndroid, isPWA: isPWA() });
+
+  if (isIOS && !isPWA()) {
+    console.log("iOS detected but not running as PWA - notifications limited");
+    // Show PWA installation prompt after a delay
+    setTimeout(() => {
+      showPWAInstallPrompt();
+    }, 5000);
+  }
+
+  return { isMobile, isIOS, isAndroid };
+};
+
+// Service Worker setup
+const setupServiceWorker = async () => {
+  if ("serviceWorker" in navigator) {
+    try {
+      const registration = await navigator.serviceWorker.register("/sw.js");
+      console.log("✅ Service Worker registered:", registration);
+      return registration;
+    } catch (error) {
+      console.error("❌ Service Worker registration failed:", error);
+      return null;
+    }
+  }
+  return null;
+};
+
+// PWA installation prompt
+const showPWAInstallPrompt = () => {
+  if (document.querySelector(".pwa-install-overlay")) return; // Prevent duplicates
+
+  const modal = document.createElement("div");
+  modal.className = "pwa-install-overlay";
+
+  modal.innerHTML = `
+    <div class="pwa-install-modal">
       <div class="modal-content">
         <div class="modal-header">
-          <h3>🔔 Enable Notifications</h3>
+          <h3>📱 Install App for Best Experience</h3>
         </div>
         <div class="modal-body">
-          <p>Get notified when you receive new messages, even when the app is in the background.</p>
-          <p>This helps you stay connected with your conversations!</p>
+          <p>For notifications and the best mobile experience:</p>
+          <ol style="text-align: left; padding-left: 20px;">
+            <li>Tap the Share button (□↗) at the bottom</li>
+            <li>Select "Add to Home Screen"</li>
+            <li>Tap "Add" to install</li>
+            <li>Open the app from your home screen</li>
+          </ol>
         </div>
         <div class="modal-buttons">
-          <button class="modal-button secondary" data-action="deny">Not Now</button>
-          <button class="modal-button primary" data-action="allow">Enable Notifications</button>
+          <button class="modal-button secondary" onclick="this.closest('.pwa-install-overlay').remove()">Later</button>
+          <button class="modal-button primary" onclick="this.closest('.pwa-install-overlay').remove()">Got it!</button>
+        </div>
+      </div>
+    </div>
+  `;
+
+  // Add styles if not already added
+  if (!document.querySelector("#pwa-modal-styles")) {
+    const styles = document.createElement("style");
+    styles.id = "pwa-modal-styles";
+    styles.textContent = `
+      .pwa-install-overlay, .manual-instructions-overlay, .notification-permission-overlay {
+        position: fixed;
+        top: 0;
+        left: 0;
+        right: 0;
+        bottom: 0;
+        background: rgba(0, 0, 0, 0.5);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        z-index: 10001;
+        padding: 20px;
+      }
+      
+      .pwa-install-modal, .manual-instructions-modal, .notification-permission-modal {
+        background: white;
+        border-radius: 12px;
+        max-width: 400px;
+        width: 100%;
+        box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
+      }
+      
+      .modal-content {
+        padding: 24px;
+      }
+      
+      .modal-header h3 {
+        margin: 0 0 16px 0;
+        color: #333;
+        text-align: center;
+      }
+      
+      .modal-body {
+        margin-bottom: 24px;
+        color: #666;
+        line-height: 1.5;
+      }
+      
+      .modal-body ol {
+        margin: 12px 0;
+      }
+      
+      .modal-body li {
+        margin: 8px 0;
+      }
+      
+      .modal-buttons {
+        display: flex;
+        gap: 12px;
+        justify-content: flex-end;
+      }
+      
+      .modal-button {
+        padding: 10px 20px;
+        border: none;
+        border-radius: 6px;
+        cursor: pointer;
+        font-weight: 500;
+        transition: all 0.2s;
+      }
+      
+      .modal-button.primary {
+        background: #007bff;
+        color: white;
+      }
+      
+      .modal-button.primary:hover {
+        background: #0056b3;
+      }
+      
+      .modal-button.secondary {
+        background: #f8f9fa;
+        color: #6c757d;
+        border: 1px solid #dee2e6;
+      }
+      
+      .modal-button.secondary:hover {
+        background: #e9ecef;
+      }
+    `;
+    document.head.appendChild(styles);
+  }
+
+  document.body.appendChild(modal);
+};
+
+// Manual instructions for iOS users
+const showManualInstructions = () => {
+  if (document.querySelector(".manual-instructions-overlay")) return;
+
+  const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent);
+
+  if (isIOS) {
+    const modal = document.createElement("div");
+    modal.className = "manual-instructions-overlay";
+
+    modal.innerHTML = `
+      <div class="manual-instructions-modal">
+        <div class="modal-content">
+          <div class="modal-header">
+            <h3>📱 Enable Notifications on iOS</h3>
+          </div>
+          <div class="modal-body">
+            <ol style="text-align: left; padding-left: 20px;">
+              <li><strong>Add to Home Screen:</strong> Tap the Share button (□↗) and select "Add to Home Screen"</li>
+              <li><strong>Open from Home Screen:</strong> Use the app icon, not Safari</li>
+              <li><strong>Enable in Settings:</strong> Go to Settings > Safari > Advanced > Experimental Features > Turn on "Notifications"</li>
+            </ol>
+            <p><small>Note: iOS notifications only work in PWA mode (installed to home screen)</small></p>
+          </div>
+          <div class="modal-buttons">
+            <button class="modal-button primary" onclick="this.closest('.manual-instructions-overlay').remove()">Got it!</button>
+          </div>
         </div>
       </div>
     `;
 
-    // Add styles if not already added
-    if (!document.querySelector("#notification-modal-styles")) {
-      const styles = document.createElement("style");
-      styles.id = "notification-modal-styles";
-      styles.textContent = `
-        .notification-permission-overlay {
-          position: fixed;
-          top: 0;
-          left: 0;
-          right: 0;
-          bottom: 0;
-          background: rgba(0, 0, 0, 0.5);
-          display: flex;
-          align-items: center;
-          justify-content: center;
-          z-index: 10000;
-          padding: 20px;
-        }
-        
-        .notification-permission-modal {
-          background: white;
-          border-radius: 12px;
-          box-shadow: 0 10px 30px rgba(0, 0, 0, 0.3);
-          max-width: 400px;
-          width: 100%;
-          animation: modalSlideIn 0.3s ease-out;
-        }
-        
-        .modal-content {
-          padding: 24px;
-        }
-        
-        .modal-header h3 {
-          margin: 0 0 16px 0;
-          color: #333;
-          font-size: 18px;
-          text-align: center;
-        }
-        
-        .modal-body p {
-          margin: 0 0 12px 0;
-          color: #666;
-          line-height: 1.4;
-          text-align: center;
-        }
-        
-        .modal-buttons {
-          display: flex;
-          gap: 12px;
-          margin-top: 24px;
-        }
-        
-        .modal-button {
-          flex: 1;
-          padding: 12px 20px;
-          border: none;
-          border-radius: 8px;
-          font-size: 14px;
-          font-weight: 500;
-          cursor: pointer;
-          transition: all 0.2s;
-        }
-        
-        .modal-button.primary {
-          background: #007bff;
-          color: white;
-        }
-        
-        .modal-button.primary:hover {
-          background: #0056b3;
-        }
-        
-        .modal-button.secondary {
-          background: #f8f9fa;
-          color: #666;
-          border: 1px solid #dee2e6;
-        }
-        
-        .modal-button.secondary:hover {
-          background: #e9ecef;
-        }
-        
-        @keyframes modalSlideIn {
-          from {
-            transform: translateY(-20px);
-            opacity: 0;
-          }
-          to {
-            transform: translateY(0);
-            opacity: 1;
-          }
-        }
-        
-        @media (max-width: 480px) {
-          .notification-permission-overlay {
-            padding: 16px;
-          }
-          
-          .modal-content {
-            padding: 20px;
-          }
-          
-          .modal-buttons {
-            flex-direction: column;
-          }
-        }
-      `;
-      document.head.appendChild(styles);
+    document.body.appendChild(modal);
+  }
+};
+
+// Show notification permission modal
+const showNotificationPermissionModal = () => {
+  return new Promise((resolve) => {
+    if (document.querySelector(".notification-permission-overlay")) {
+      resolve(false);
+      return;
     }
 
-    // Add event listeners
-    const handleClick = (e) => {
-      const action = e.target.dataset.action;
-      if (action) {
-        document.body.removeChild(overlay);
-        resolve(action === "allow");
-      }
-    };
+    const modal = document.createElement("div");
+    modal.className = "notification-permission-overlay";
 
-    modal.addEventListener("click", handleClick);
+    modal.innerHTML = `
+      <div class="notification-permission-modal">
+        <div class="modal-content">
+          <div class="modal-header">
+            <h3>🔔 Stay Connected</h3>
+          </div>
+          <div class="modal-body">
+            <p>Get notified when someone sends a message, even when you're not actively using the app.</p>
+            <p><strong>We'll only send notifications for new messages.</strong></p>
+          </div>
+          <div class="modal-buttons">
+            <button class="modal-button secondary" onclick="this.closest('.notification-permission-overlay').remove(); window.notificationModalResolve(false);">Not Now</button>
+            <button class="modal-button primary" onclick="this.closest('.notification-permission-overlay').remove(); window.notificationModalResolve(true);">Enable Notifications</button>
+          </div>
+        </div>
+      </div>
+    `;
 
-    // Add to DOM
-    overlay.appendChild(modal);
-    document.body.appendChild(overlay);
+    // Store resolve function globally
+    window.notificationModalResolve = resolve;
 
-    // Handle outside click
-    overlay.addEventListener("click", (e) => {
-      if (e.target === overlay) {
-        document.body.removeChild(overlay);
-        resolve(false);
-      }
-    });
+    document.body.appendChild(modal);
   });
 };
 
-// Notification functions moved outside component
+// Enhanced notification permission function
 const requestNotificationPermission = async () => {
   try {
-    // Only ask once per session
     if (notificationPermissionRequested) {
       console.log("Notification permission already requested this session");
       return;
@@ -301,13 +350,17 @@ const requestNotificationPermission = async () => {
       return;
     }
 
-    // Check if user is authenticated before requesting permission
     if (!auth.currentUser) {
       console.log("User not authenticated, skipping notification setup");
       return;
     }
 
-    // Check current permission status
+    // Set up service worker first
+    const registration = await setupServiceWorker();
+    if (!registration) {
+      console.log("❌ Service Worker setup failed");
+    }
+
     console.log("Current notification permission:", Notification.permission);
 
     if (Notification.permission === "granted") {
@@ -318,10 +371,11 @@ const requestNotificationPermission = async () => {
 
     if (Notification.permission === "denied") {
       console.log("❌ Notifications permanently denied");
+      showManualInstructions();
       return;
     }
 
-    // Show custom modal instead of browser confirm
+    // Show custom modal for better mobile UX
     const userWantsNotifications = await showNotificationPermissionModal();
 
     if (!userWantsNotifications) {
@@ -329,14 +383,12 @@ const requestNotificationPermission = async () => {
       return;
     }
 
-    // Request permission
     console.log("📱 Requesting notification permission...");
 
     let permission;
     try {
       permission = await Notification.requestPermission();
     } catch (error) {
-      // Fallback for older browsers
       permission = await new Promise((resolve) => {
         Notification.requestPermission(resolve);
       });
@@ -347,8 +399,24 @@ const requestNotificationPermission = async () => {
     if (permission === "granted") {
       console.log("✅ Notification permission granted!");
       showTestNotification();
+
+      // Set up FCM token if available
+      if (messaging && registration) {
+        try {
+          // You'll need to replace 'YOUR_VAPID_KEY' with your actual VAPID key
+          // const token = await getToken(messaging, {
+          //   vapidKey: 'YOUR_VAPID_KEY',
+          //   serviceWorkerRegistration: registration
+          // });
+          // console.log('FCM Token:', token);
+          // Save token to your backend
+        } catch (tokenError) {
+          console.log("FCM token error:", tokenError);
+        }
+      }
     } else if (permission === "denied") {
       console.log("❌ Notification permission denied");
+      showManualInstructions();
     } else {
       console.log("⏸️ Notification permission dismissed");
     }
@@ -361,41 +429,23 @@ const showTestNotification = () => {
   if (Notification.permission === "granted") {
     try {
       const testNotification = new Notification("🎉 Notifications Ready!", {
-        body: "You'll receive alerts when you get new messages",
-        icon: window.location.origin + "/favicon.ico",
+        body: "You'll now receive chat notifications",
+        icon: "/favicon.ico",
         tag: "test-notification",
         requireInteraction: false,
         silent: false,
-        data: {
-          type: "test",
-        },
       });
 
-      // Add click handler for test notification
-      testNotification.onclick = function () {
-        console.log("Test notification clicked");
-        if (window.focus) {
-          window.focus();
-        }
-        this.close();
-      };
-
-      // Auto-close after 4 seconds
       setTimeout(() => {
         if (testNotification) {
           testNotification.close();
         }
-      }, 4000);
+      }, 3000);
 
-      console.log("✅ Test notification displayed");
-
-      // Use safe vibration function
-      safeVibrate([100, 50, 100]);
+      console.log("✅ Test notification sent");
     } catch (error) {
       console.error("❌ Test notification failed:", error);
     }
-  } else {
-    console.log("❌ Cannot show test notification - permission not granted");
   }
 };
 
@@ -428,7 +478,7 @@ const setupForegroundNotifications = () => {
 };
 
 const sendNotification = async (messageData) => {
-  console.log("📨 Attempting to send notification for:", messageData);
+  console.log("📨 Attempting to send mobile notification for:", messageData);
 
   // Only send notification if it's not from the current user
   if (messageData.uid === auth.currentUser?.uid) {
@@ -436,100 +486,70 @@ const sendNotification = async (messageData) => {
     return;
   }
 
-  // Check if app is in background (only send notifications when app is not visible)
-  if (!document.hidden) {
-    console.log("📱 App is active, skipping notification");
-    return;
-  }
-
-  console.log("📱 App is in background, sending notification");
-
   // Check if notifications are supported and permitted
   if (!("Notification" in window)) {
-    console.log("❌ Notifications not supported, showing in-app fallback");
+    console.log("❌ Notifications not supported");
     showInAppNotification(messageData);
     return;
   }
 
   if (Notification.permission !== "granted") {
-    console.log(
-      "❌ Notification permission not granted, showing in-app fallback"
-    );
+    console.log("❌ Notification permission not granted");
     showInAppNotification(messageData);
     return;
   }
 
   try {
-    // Enhanced notification options for better mobile support
-    const notificationOptions = {
+    const notification = new Notification(`💬 ${messageData.displayName}`, {
       body:
         messageData.text.length > 100
           ? messageData.text.substring(0, 100) + "..."
           : messageData.text,
-      icon: window.location.origin + "/favicon.ico",
-      badge: window.location.origin + "/favicon.ico",
-      tag: "chat-message-" + messageData.id,
-      requireInteraction: true,
+      icon: "/favicon.ico",
+      badge: "/favicon.ico",
+      tag: "chat-message",
+      requireInteraction: false,
       silent: false,
+      vibrate: [200, 100, 200],
       data: {
         messageId: messageData.id,
         timestamp: Date.now(),
         sender: messageData.displayName,
-        url: window.location.href,
       },
-    };
+    });
 
-    // Use safe vibration function
-    safeVibrate([200, 100, 200]);
+    setTimeout(() => {
+      if (notification) {
+        notification.close();
+      }
+    }, 6000);
 
-    const notification = new Notification(
-      `💬 ${messageData.displayName}`,
-      notificationOptions
-    );
-
-    // Handle notification click
     notification.onclick = function (event) {
       console.log("📱 Notification clicked");
-      event.preventDefault();
-
-      // Focus the window
       if (window.focus) {
         window.focus();
       }
-
-      // Bring app to foreground
-      if (window.parent && window.parent.focus) {
-        window.parent.focus();
-      }
-
-      // Scroll to bottom of chat
       setTimeout(() => {
         const dummy = document.querySelector(".scroll-anchor");
         if (dummy) {
           dummy.scrollIntoView({ behavior: "smooth" });
         }
-      }, 200);
-
+      }, 100);
       this.close();
     };
 
-    // Handle notification error
     notification.onerror = function (event) {
       console.error("❌ Notification error:", event);
       showInAppNotification(messageData);
     };
 
-    // Auto-close after 10 seconds (longer for mobile)
-    setTimeout(() => {
-      if (notification) {
-        notification.close();
-      }
-    }, 10000);
+    console.log("✅ Mobile notification sent successfully");
 
-    console.log("✅ Push notification sent successfully");
+    if ("vibrate" in navigator) {
+      navigator.vibrate([200, 100, 200]);
+    }
   } catch (error) {
-    console.error("❌ Error showing push notification:", error);
-    // Always show in-app notification as fallback
+    console.error("❌ Error showing mobile notification:", error);
     showInAppNotification(messageData);
   }
 };
@@ -644,8 +664,9 @@ const showInAppNotification = (messageData) => {
     }
   }, 5000);
 
-  // Use safe vibration function
-  safeVibrate([200, 100, 200]);
+  if ("vibrate" in navigator) {
+    navigator.vibrate([200, 100, 200]);
+  }
 };
 
 const clearExistingNotifications = () => {
@@ -673,26 +694,15 @@ function App() {
   const [user] = useAuthState(auth);
 
   useEffect(() => {
-    // Track user interactions for vibration API
-    const events = ["click", "touchstart", "keydown", "mousedown"];
-
-    const handleInteraction = () => {
-      trackUserInteraction();
-      // Remove listeners after first interaction
-      events.forEach((event) => {
-        document.removeEventListener(event, handleInteraction);
-      });
-    };
-
-    events.forEach((event) => {
-      document.addEventListener(event, handleInteraction, { once: true });
-    });
+    const deviceInfo = detectMobileAndSetup();
 
     if (user) {
-      // Request notification permission only once when user logs in
+      // Delay notification setup for mobile
+      const delay = deviceInfo.isMobile ? 3000 : 1000;
+
       setTimeout(() => {
         requestNotificationPermission();
-      }, 1000); // Small delay to ensure user is settled
+      }, delay);
 
       setupForegroundNotifications();
 
@@ -711,17 +721,8 @@ function App() {
       return () => {
         window.removeEventListener("focus", handleAppResume);
         window.removeEventListener("blur", handleAppPause);
-        events.forEach((event) => {
-          document.removeEventListener(event, handleInteraction);
-        });
       };
     }
-
-    return () => {
-      events.forEach((event) => {
-        document.removeEventListener(event, handleInteraction);
-      });
-    };
   }, [user]);
 
   return (
@@ -839,35 +840,11 @@ function SignIn() {
 }
 
 function SignOut() {
-  const testNotification = () => {
-    if (Notification.permission === "granted") {
-      const testMsg = {
-        uid: "test-user-id",
-        displayName: "Test User",
-        text: "This is a test notification to check if notifications work!",
-        id: "test-" + Date.now(),
-      };
-      sendNotification(testMsg);
-    } else {
-      alert("🔔 Please allow notifications first!");
-      requestNotificationPermission();
-    }
-  };
-
   return (
     auth.currentUser && (
-      <div className="header-buttons">
-        <button
-          className="test-notification-button"
-          onClick={testNotification}
-          title="Test Notifications"
-        >
-          🔔
-        </button>
-        <button className="signout-button" onClick={() => signOut(auth)}>
-          Sign Out
-        </button>
-      </div>
+      <button className="signout-button" onClick={() => signOut(auth)}>
+        Sign Out
+      </button>
     )
   );
 }
@@ -941,7 +918,7 @@ function ChatRoom() {
 
       setTimeout(() => {
         sendNotification(notificationData);
-      }, 1000);
+      }, 500);
     } catch (error) {
       console.error("❌ Error sending message:", error);
       alert("Failed to send message. Please try again.");
@@ -1011,38 +988,31 @@ function ChatRoom() {
   );
 }
 
-function ChatMessage({ message }) {
-  const { text, uid, displayName, createdAt } = message;
-  const isOwn = uid === auth.currentUser?.uid;
-  const timestamp = createdAt
-    ?.toDate()
-    .toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+function ChatMessage(props) {
+  const { text, uid, displayName, createdAt } = props.message;
+  const messageClass = uid === auth.currentUser.uid ? "sent" : "received";
 
-  const firstLetter = displayName ? displayName[0].toUpperCase() : "?";
+  const formatTime = (timestamp) => {
+    if (!timestamp) return "";
+    const date = timestamp.toDate();
+    return date.toLocaleTimeString("en-US", {
+      hour: "numeric",
+      minute: "2-digit",
+      hour12: true,
+    });
+  };
 
   return (
-    <div className={`message-wrapper ${isOwn ? "own" : "other"}`}>
-      {!isOwn && (
-        <div className="message-avatar">
-          <span className="avatar-text">{firstLetter}</span>
-        </div>
-      )}
-
-      <div className={`message-bubble ${isOwn ? "own" : "other"}`}>
-        <div className="message-content">
-          <div className="message-header">
-            {!isOwn && <span className="message-author">{displayName}</span>}
-            <span className="message-time">{timestamp}</span>
-          </div>
-          <div className="message-text">{text}</div>
+    <div className={`message ${messageClass}`}>
+      <div className="message-content">
+        {messageClass === "received" && (
+          <div className="message-sender">{displayName}</div>
+        )}
+        <div className="message-bubble">
+          <p className="message-text">{text}</p>
+          <div className="message-time">{formatTime(createdAt)}</div>
         </div>
       </div>
-
-      {isOwn && (
-        <div className="message-avatar own">
-          <span className="avatar-text">{firstLetter}</span>
-        </div>
-      )}
     </div>
   );
 }
